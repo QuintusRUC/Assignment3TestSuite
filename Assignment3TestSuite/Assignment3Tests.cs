@@ -1,4 +1,4 @@
-//#define RUN_ALL_TESTS
+#define RUN_ALL_TESTS
 using System;
 using System.Collections.Generic;
 using System.IO;
