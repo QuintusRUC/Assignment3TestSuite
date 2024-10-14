@@ -1,11 +1,10 @@
-﻿
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System;
 using System.Text.Json;
-using System.IO;
-using System.ComponentModel;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 public class Server
 {
@@ -14,14 +13,11 @@ public class Server
     public Server(int port)
     {
         _port = port;
-
-        
     }
 
-    
-    public void Run() { 
- 
-        var server = new TcpListener(IPAddress.Loopback, _port); // IPv4 127.0.0.1 IPv6 ::1
+    public void Run()
+    {
+        var server = new TcpListener(IPAddress.Loopback, _port);
         server.Start();
 
         Console.WriteLine($"Server started on port {_port}");
@@ -32,18 +28,18 @@ public class Server
             Console.WriteLine("Client connected!!!");
 
             Task.Run(() => HandleClient(client));
-
         }
-
     }
+
     private void HandleClient(TcpClient client)
     {
         var stream = client.GetStream();
         try
         {
             string msg = ReadFromStream(stream);
+            Console.WriteLine("Message from client: " + msg);
 
-            
+            // Check for empty or invalid messages
             if (string.IsNullOrWhiteSpace(msg) || msg == "{}")
             {
                 var response = new Response
@@ -55,9 +51,55 @@ public class Server
             }
 
             var request = FromJson(msg);
+            var errors = new List<string>();
 
-            string validPath = "/api/category";
-            if(!validPath.Contains("/api/category"))
+            // Validate request and collect errors
+            if (request == null)
+            {
+                errors.Add("invalid request");
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(request.Method))
+                {
+                    errors.Add("missing method");
+                }
+                else
+                {
+                    string[] validMethods = { "create", "read", "update", "delete", "echo" };
+                    if (!validMethods.Contains(request.Method))
+                    {
+                        errors.Add("illegal method");
+                    }
+                }
+
+                if (request.Method != "echo" && string.IsNullOrEmpty(request.Path))
+                {
+                    errors.Add("missing resource");
+                }
+
+                if (string.IsNullOrEmpty(request.Date))
+                {
+                    errors.Add("missing date");
+                }
+                else if (!ValidUnixTime(request.Date.ToString()))
+                {
+                    errors.Add("illegal date");
+                }
+            }
+            
+            if (errors.Count > 0)
+            {
+                var response = new Response
+                {
+                    Status = "4 " + string.Join(", ", errors)
+                };
+                WriteToStream(stream, ToJson(response));
+                return;
+            }
+
+            // Handle specific valid requests, like checking the path for "read" or "update"
+            if (request.Method == "read" && !request.Path.StartsWith("/api/category"))
             {
                 var response = new Response
                 {
@@ -67,66 +109,21 @@ public class Server
                 return;
             }
 
-          
-            if (request == null)
-            {
-                var response = new Response
-                {
-                    Status = "invalid request"
-                };
-                WriteToStream(stream, ToJson(response));
-                return;
-            }
-
-            
-            if (request.Date == null)
-            {
-                var response = new Response
-                {
-                    Status = "missing date"
-                };
-                WriteToStream(stream, ToJson(response));
-                return;
-            }
-            if (!ValidUnixTime(request.Date.ToString()))
-            {
-                var response = new Response
-                {
-                    Status = "illegal date"
-                };
-                WriteToStream(stream, ToJson(response));
-                return;
-            }
-
-           
-            string[] validMethods = { "create", "read", "update", "delete", "echo" };
-            if (!validMethods.Contains(request.Method))
-            {
-                var response = new Response
-                {
-                    Status = "illegal method"
-                };
-                WriteToStream(stream, ToJson(response));
-                return;
-            }
         }
         catch (Exception e)
         {
-            Console.WriteLine(e.Message);  
+            Console.WriteLine("Error handling client: " + e.Message);
         }
         finally
         {
-            
             stream.Close();
             client.Close();
         }
     }
 
-
     private bool ValidUnixTime(string dateString)
     {
-        long unixTime;
-        return long.TryParse(dateString, out unixTime) && unixTime >= 0;
+        return long.TryParse(dateString, out long unixTime) && unixTime >= 0;
     }
 
     private string ReadFromStream(NetworkStream stream)
@@ -141,6 +138,7 @@ public class Server
         var buffer = Encoding.UTF8.GetBytes(msg);
         stream.Write(buffer);
     }
+
     public static string ToJson(Response response)
     {
         return JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
@@ -148,6 +146,13 @@ public class Server
 
     public static Request? FromJson(string element)
     {
-        return JsonSerializer.Deserialize<Request>(element, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        try
+        {
+            return JsonSerializer.Deserialize<Request>(element, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
